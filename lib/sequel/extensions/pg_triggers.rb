@@ -44,7 +44,7 @@ module Sequel
           IF (TG_OP = 'UPDATE') THEN
             NEW.#{col} := OLD.#{col};
           ELSIF (TG_OP = 'INSERT') THEN
-            NEW.#{col} := CURRENT_TIMESTAMP;
+            NEW.#{col} := CURRENT_TIMESTAMP at time zone 'utc';
           END IF;
           RETURN NEW;
         END;
@@ -200,7 +200,7 @@ module Sequel
         function_name = opts[:function_name] || "pgt_ua_#{table}__#{column}"
         pgt_trigger(table, trigger_name, function_name, [:insert, :update], <<-SQL)
         BEGIN
-          NEW.#{quote_identifier(column)} := CURRENT_TIMESTAMP;
+          NEW.#{quote_identifier(column)} := CURRENT_TIMESTAMP at time zone 'utc';
           RETURN NEW;
         END;
         SQL
