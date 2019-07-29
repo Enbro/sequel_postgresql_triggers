@@ -7,6 +7,7 @@ a user to easily handle the following types of columns:
 * Counter/Sum Caches
 * Immutable Columns
 * Touch Propogation
+* Foreign Key Arrays (Referential Integrity Checks)
 
 It handles these internally to the database via triggers, so even if
 other applications access the database (without using Sequel), things
@@ -94,11 +95,15 @@ opts :: options hash
 
 === Counter Cache - pgt_counter_cache
 
-This takes quite a few arguments (see the RDoc) and sets up a
+This takes many arguments and sets up a
 counter cache so that when the counted table is inserted to
 or deleted from, records in the main table are updated with the
 count of the corresponding records in the counted table.  The counter
 cache column must have a default of 0 for this to work correctly.
+
+Use pgt_sum_cache with a Sequel expression in summed_column to
+handle any custom logic such as a counter cache that only counts
+certain rows.
 
 Arguments:
 main_table :: name of table holding counter cache column
@@ -115,13 +120,17 @@ of records in the main table, it stores the sum on one of the
 columns in summed table. The sum cache column must have a default
 of 0 for this to work correctly.
 
+Use a Sequel expression in summed_column to handle any custom
+logic such as a counter cache that only counts certain rows, or a
+sum cache that sums the length of a string column.
+
 Arguments:
 main_table :: name of table holding counter cache column
 main_table_id_column :: column in main table matching counted_table_id_column in counted_table
 sum_column :: column in main table containing the sum cache
 summed_table :: name of table being summed
 summed_table_id_column :: column in summed_table matching main_table_id_column in main_table
-summed_column :: column in summed_table being summed
+summed_column :: column in summed_table being summed or a Sequel expression to be evaluated in the context of summed_table
 opts :: options hash
 
 === Sum Through Many Cache - pgt_sum_through_many_cache
@@ -129,6 +138,8 @@ opts :: options hash
 Similar to pgt_sum_cache, except instead of a one-to-many relationship,
 it supports a many-to-many relationship with a single join table. The
 sum cache column must have a default of 0 for this to work correctly.
+Use a Sequel expression in summed_column to handle any custom logic.
+See pgt_sum_cache for details.
 
 This takes a single options hash argument, supporting the following options
 in addition to the standard options:
@@ -137,7 +148,7 @@ in addition to the standard options:
 :sum_column :: column in main table containing the sum cache, must be NOT NULL and default to 0
 :summed_table :: name of table being summed
 :summed_table_id_column :: primary key column in summed_table referenced by summed_table_fk_column (default: :id)
-:summed_column :: column in summed_table being summed, must be NOT NULL
+:summed_column :: column in summed_table being summed or a Sequel expression to be evaluated in the context of summed_table, must be NOT NULL
 :join_table :: name of table which joins main_table with summed_table
 :join_trigger_name :: name of trigger for join table
 :join_function_name :: name of trigger function for join table
@@ -156,7 +167,7 @@ table :: name of table
 
 === Touch Propagation - pgt_touch
 
-This takes several arguments (again, see the RDoc) and sets up a
+This takes several arguments and sets up a
 trigger that watches one table for changes, and touches timestamps
 of related rows in a separate table.
 
@@ -166,6 +177,82 @@ touch_table :: name of table that needs to be touched
 column :: name of timestamp column to be touched
 expr :: hash or array that represents the columns that define the relationship
 opts :: options hash
+
+=== Foreign Key Arrays - pgt_foreign_key_array
+
+This takes a single options hash, and sets up triggers on both
+tables involved.  The table with the foreign key array has insert/update
+triggers to make sure newly inserted/updated rows reference valid rows
+in the referenced table.  The table being referenced has update/delete
+triggers to make sure the value before update or delete is not still
+being referenced.
+
+Note that this will not catch all referential integrity violations, but
+it should catch the most common ones.
+
+Options:
+:table :: table with foreign key array
+:column :: foreign key array column
+:referenced_table :: table referenced by foreign key array
+:referenced_column :: column referenced by foreign key array (generally primary key)
+:referenced_function_name :: function name for trigger function on referenced table
+:referenced_trigger_name :: trigger name for referenced table
+
+=== Force Defaults - pgt_force_defaults
+
+This takes 2 arguments, a table and a hash of column default values, and sets
+up an insert trigger that will override user submitted or database
+default values and use the values given when setting up the trigger.
+This is mostly useful in situations where multiple database accounts
+are used where one account has insert permissions but not update
+permissions, and you want to ensure that inserted rows have specific
+column values to enforce security requirements.
+
+Arguments:
+table :: The name of the table
+defaults :: A hash of default values to enforce, where keys are column names
+            and values are the default values to enforce
+
+=== JSON Audit Logging - pgt_json_audit_log_setup and pg_json_audit_log
+
+These methods setup an auditing function where updates and deletes log
+the previous values to a central auditing table in JSON format.
+
+==== pgt_json_audit_log_setup
+
+This creates an audit table and a trigger function that will log
+previous values to the audit table. This returns the name of the
+trigger function created, which should be passed to
++pgt_json_audit_log+.
+
+Arguments:
+table :: The name of the table storing the audit logs.
+
+Options:
+function_opts :: Options to pass to +create_function+ when creating
+                 the trigger function.
+
+The audit log table will store the following columns:
+
+txid :: The 64-bit transaction ID for the transaction that made the modification (txid_current())
+at :: The timestamp of the transaction that made the modification (CURRENT_TIMESTAMP)
+user :: The database user name that made the modification (CURRENT_USER)
+schema :: The schema containing the table that was modified (TG_TABLE_SCHEMA)
+table :: The table that was modified (TG_TABLE_NAME)
+action :: The type of modification, either DELETE or UPDATE (TG_OP)
+prior :: A jsonb column with the contents of the row before the modification (to_jsonb(OLD))
+
+==== pgt_json_audit_log
+
+This adds a trigger to the table that will log previous values to the
+audting table for updates and deletes.
+
+Arguments:
+table :: The name of the table to audit
+function :: The name of the trigger function to call to log changes
+
+Note that it is probably a bad idea to use the same table argument
+to both +pgt_json_audit_log_setup+ and +pgt_json_audit_log+.
 
 == License
 
